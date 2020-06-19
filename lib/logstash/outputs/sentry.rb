@@ -12,8 +12,7 @@ class LogStash::Outputs::Sentry < LogStash::Outputs::Base
 
   # Project id, key and secret
   config :project_id, :validate => :string, :required => true
-  config :key, :validate => :string, :required => true
-  config :secret, :validate => :string, :required => true
+  config :public_key, :validate => :string, :required => true
 
   def self.sentry_key(name, field_default=nil, value_default=nil)
     name = name.to_s if name.is_a?(Symbol)
@@ -62,7 +61,8 @@ class LogStash::Outputs::Sentry < LogStash::Outputs::Base
   # https://docs.sentry.io/clientdev/interfaces/threads/
   sentry_key :threads
   # https://docs.sentry.io/clientdev/interfaces/user/
-  sentry_key :user
+  sentry_key :user_email
+  sentry_key :user_name
   # https://docs.sentry.io/clientdev/interfaces/debug/
   sentry_key :debug_meta
   # https://docs.sentry.io/clientdev/interfaces/repos/
@@ -110,9 +110,17 @@ class LogStash::Outputs::Sentry < LogStash::Outputs::Base
       :platform => get(event, :platform) || "other",
     }
 
+    if !(get(event, :user_email).nil?)
+      packet["user"] = {
+        :id => get(event, :user_email),
+        :email => get(event, :user_email),
+        :username => get(event, :user_name),
+      }
+    end
+  
     for key in LogStash::Outputs::Sentry.sentry_keys
         sentry_key = key.gsub(/^_/,'')
-        next if packet[sentry_key];
+        next if packet[sentry_key] || key == :user_email || key == :user_name;
         value = get(event, key)
         packet[sentry_key] = value if value
     end
@@ -122,12 +130,11 @@ class LogStash::Outputs::Sentry < LogStash::Outputs::Base
 
   def send_packet(event, packet, timestamp)
     auth_header = "Sentry sentry_version=5," +
-      "sentry_client=raven_logstash/0.4.0," +
+      "sentry_client=raven_logstash/0.5.0," +
       "sentry_timestamp=#{timestamp.to_i}," +
-      "sentry_key=#{event.sprintf(@key)}," +
-      "sentry_secret=#{event.sprintf(@secret)}"
+      "sentry_key=#{event.sprintf(@public_key)}"
 
-    url = "#{event.sprintf(@url)}/#{event.sprintf(@project_id)}/store/"
+    url = "#{event.sprintf(@url)}/api/#{event.sprintf(@project_id)}/store/"
 
     require 'http'
     response = HTTP.post(url, :body => packet.to_json, :headers => {:"X-Sentry-Auth" => auth_header})
